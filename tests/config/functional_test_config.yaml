@@ -1,0 +1,622 @@
+# Test Configuration for Cloud Storage Tiering System
+# This config file drives all functional tests
+
+test_suite:
+  name: "Cloud Storage Tiering System Functional Tests"
+  version: "1.0.0"
+  
+# Test data configurations
+test_data:
+  file_sizes:
+    minimum: 1048576  # 1MB
+    maximum: 10737418240  # 10GB
+    sample: 2097152  # 2MB
+    small: 524288  # 512KB
+    large: 5368709120  # 5GB
+    very_large: 11811160064  # 11GB
+  
+  content_types:
+    - text/plain
+    - application/json
+    - image/png
+    - application/octet-stream
+  
+  concurrent_workers: 10
+  bulk_file_count: 100
+
+# Test cases configuration
+test_cases:
+  file_upload:
+    - id: "TC-FILE-001"
+      priority: "P0"
+      name: "Upload Valid File (Happy Path)"
+      endpoint: "POST /files"
+      steps:
+        - action: "create_file"
+          size: "sample"
+          filename: "sample.bin"
+        - action: "upload"
+          expected_status: 201
+        - action: "verify_response"
+          fields:
+            - file_id
+            - tier: "HOT"
+        - action: "get_metadata"
+          verify:
+            - filename
+            - size
+            - content_type
+            - tier
+    
+    - id: "TC-FILE-002"
+      priority: "P1"
+      name: "Upload File - Minimum Size Boundary"
+      endpoint: "POST /files"
+      steps:
+        - action: "create_file"
+          size: 1048576  # Exactly 1MB
+          filename: "min_size.bin"
+        - action: "upload"
+          expected_status: 201
+        - action: "verify_response"
+          fields:
+            - size: 1048576
+    
+    - id: "TC-FILE-003"
+      priority: "P1"
+      name: "Upload File - Maximum Size Boundary"
+      endpoint: "POST /files"
+      steps:
+        - action: "create_file"
+          size: 10737418240  # Exactly 10GB
+          filename: "max_size.bin"
+        - action: "upload"
+          expected_status: 201
+        - action: "verify_response"
+          fields:
+            - size: 10737418240
+    
+    - id: "TC-FILE-004"
+      priority: "P1"
+      name: "Upload File - Below Minimum Size"
+      endpoint: "POST /files"
+      steps:
+        - action: "create_file"
+          size: "small"
+          filename: "small.bin"
+        - action: "upload"
+          expected_status: 400
+        - action: "verify_error"
+          message_contains: "minimum size 1MB"
+    
+    - id: "TC-FILE-005"
+      priority: "P1"
+      name: "Upload File - Above Maximum Size"
+      endpoint: "POST /files"
+      steps:
+        - action: "create_file"
+          size: "very_large"
+          filename: "too_large.bin"
+        - action: "upload"
+          expected_status: 400
+        - action: "verify_error"
+          message_contains: "maximum size 10GB"
+    
+    - id: "TC-FILE-006"
+      priority: "P1"
+      name: "Upload File - Missing File"
+      endpoint: "POST /files"
+      steps:
+        - action: "upload"
+          skip_file: true
+          expected_status: 422
+    
+    - id: "TC-FILE-007"
+      priority: "P1"
+      name: "Upload File - Invalid/Various Content Types"
+      endpoint: "POST /files"
+      steps:
+        - action: "upload_multiple"
+          files:
+            - filename: "test.txt"
+              content_type: "text/plain"
+            - filename: "data.json"
+              content_type: "application/json"
+            - filename: "image.png"
+              content_type: "image/png"
+          expected_status: 201
+        - action: "verify_content_types"
+    
+    - id: "TC-FILE-008"
+      priority: "P0"
+      name: "Upload File - Concurrent Uploads"
+      endpoint: "POST /files"
+      concurrent: true
+      workers: 10
+      steps:
+        - action: "concurrent_upload"
+          count: 10
+          size: "sample"
+          expected_status: 201
+        - action: "verify_unique_ids"
+        - action: "verify_all_success"
+    
+    - id: "TC-FILE-009"
+      priority: "P1"
+      name: "Upload File - Large Number of Files"
+      endpoint: "POST /files"
+      steps:
+        - action: "bulk_upload"
+          count: 100
+          size: "sample"
+          expected_status: 201
+        - action: "verify_stats"
+          expected_files: 100
+
+  file_download:
+    - id: "TC-FILE-010"
+      priority: "P0"
+      name: "Download Existing File (Happy Path)"
+      endpoint: "GET /files/{fileId}"
+      steps:
+        - action: "upload_file"
+          size: "sample"
+        - action: "calculate_checksum"
+        - action: "download"
+          expected_status: 200
+        - action: "verify_content_match"
+        - action: "verify_last_accessed_updated"
+    
+    - id: "TC-FILE-011"
+      priority: "P1"
+      name: "Download File - Non-existent File"
+      endpoint: "GET /files/{fileId}"
+      steps:
+        - action: "generate_random_uuid"
+        - action: "download"
+          expected_status: 404
+    
+    - id: "TC-FILE-012"
+      priority: "P2"
+      name: "Download File - Invalid File ID Format"
+      endpoint: "GET /files/{fileId}"
+      steps:
+        - action: "download"
+          file_id: "invalid-id"
+          expected_status: [404, 422]
+    
+    - id: "TC-FILE-013"
+      priority: "P1"
+      name: "Download File - Verify Last Accessed Update"
+      endpoint: "GET /files/{fileId}"
+      steps:
+        - action: "upload_file"
+        - action: "get_metadata"
+          capture: "last_accessed_t0"
+        - action: "wait"
+          seconds: 1
+        - action: "download"
+        - action: "get_metadata"
+          capture: "last_accessed_t1"
+        - action: "verify_timestamp_increased"
+    
+    - id: "TC-FILE-014"
+      priority: "P1"
+      name: "Download File - Large File (5GB)"
+      endpoint: "GET /files/{fileId}"
+      steps:
+        - action: "upload_file"
+          size: "large"
+        - action: "calculate_checksum"
+        - action: "download"
+          expected_status: 200
+        - action: "verify_checksum_match"
+    
+    - id: "TC-FILE-015"
+      priority: "P0"
+      name: "Download File - Concurrent Downloads"
+      endpoint: "GET /files/{fileId}"
+      concurrent: true
+      steps:
+        - action: "upload_file"
+        - action: "concurrent_download"
+          count: 10
+          expected_status: 200
+    
+    - id: "TC-FILE-016"
+      priority: "P1"
+      name: "Download File - After Tiering"
+      endpoint: "GET /files/{fileId}"
+      steps:
+        - action: "upload_file"
+        - action: "update_last_accessed"
+          days_ago: 35
+        - action: "run_tiering"
+        - action: "download"
+          expected_status: 200
+
+  file_metadata:
+    - id: "TC-FILE-017"
+      priority: "P0"
+      name: "Get Metadata - Existing File"
+      endpoint: "GET /files/{fileId}/metadata"
+      steps:
+        - action: "upload_file"
+        - action: "get_metadata"
+          expected_status: 200
+          verify_fields:
+            - file_id
+            - filename
+            - size
+            - tier
+            - created_at
+            - last_accessed
+    
+    - id: "TC-FILE-018"
+      priority: "P1"
+      name: "Get Metadata - Non-existent File"
+      endpoint: "GET /files/{fileId}/metadata"
+      steps:
+        - action: "generate_random_uuid"
+        - action: "get_metadata"
+          expected_status: 404
+    
+    - id: "TC-FILE-019"
+      priority: "P0"
+      name: "Get Metadata - Verify Tier Information"
+      endpoint: "GET /files/{fileId}/metadata"
+      steps:
+        - action: "upload_file"
+        - action: "verify_tier"
+          tier: "HOT"
+        - action: "update_last_accessed"
+          days_ago: 35
+        - action: "run_tiering"
+        - action: "verify_tier"
+          tier: "WARM"
+        - action: "update_last_accessed"
+          days_ago: 95
+        - action: "run_tiering"
+        - action: "verify_tier"
+          tier: "COLD"
+    
+    - id: "TC-FILE-020"
+      priority: "P1"
+      name: "Get Metadata - Verify Timestamps"
+      endpoint: "GET /files/{fileId}/metadata"
+      steps:
+        - action: "upload_file"
+        - action: "get_metadata"
+          capture: ["created_at_t0", "last_accessed_t0"]
+        - action: "wait"
+          seconds: 5
+        - action: "download"
+        - action: "get_metadata"
+          capture: ["created_at_t1", "last_accessed_t1"]
+        - action: "verify_created_at_unchanged"
+        - action: "verify_last_accessed_updated"
+    
+    - id: "TC-FILE-021"
+      priority: "P1"
+      name: "Get Metadata - After Multiple Operations"
+      endpoint: "GET /files/{fileId}/metadata"
+      steps:
+        - action: "upload_file"
+        - action: "get_metadata"
+          baseline: true
+        - action: "download"
+        - action: "get_metadata"
+          verify: "last_accessed_changed"
+        - action: "run_tiering"
+        - action: "get_metadata"
+          verify: "tier_updated"
+
+  file_delete:
+    - id: "TC-FILE-022"
+      priority: "P0"
+      name: "Delete Existing File (Happy Path)"
+      endpoint: "DELETE /files/{fileId}"
+      steps:
+        - action: "upload_file"
+        - action: "delete"
+          expected_status: 204
+        - action: "download"
+          expected_status: 404
+        - action: "get_metadata"
+          expected_status: 404
+    
+    - id: "TC-FILE-023"
+      priority: "P2"
+      name: "Delete File - Non-existent File"
+      endpoint: "DELETE /files/{fileId}"
+      steps:
+        - action: "generate_random_uuid"
+        - action: "delete"
+          expected_status: 404
+    
+    - id: "TC-FILE-024"
+      priority: "P2"
+      name: "Delete File - Invalid File ID"
+      endpoint: "DELETE /files/{fileId}"
+      steps:
+        - action: "delete"
+          file_id: "invalid-id"
+          expected_status: [404, 422]
+    
+    - id: "TC-FILE-025"
+      priority: "P1"
+      name: "Delete File - Verify Complete Removal"
+      endpoint: "DELETE /files/{fileId}"
+      steps:
+        - action: "upload_file"
+        - action: "get_stats"
+          capture: "stats_before"
+        - action: "delete"
+        - action: "get_stats"
+          capture: "stats_after"
+        - action: "verify_stats_decreased"
+    
+    - id: "TC-FILE-026"
+      priority: "P0"
+      name: "Delete File - Concurrent Deletes"
+      endpoint: "DELETE /files/{fileId}"
+      concurrent: true
+      steps:
+        - action: "bulk_upload"
+          count: 10
+        - action: "concurrent_delete"
+          count: 10
+          expected_status: 204
+        - action: "verify_all_deleted"
+    
+    - id: "TC-FILE-027"
+      priority: "P1"
+      name: "Delete File - Delete and Re-upload"
+      endpoint: "DELETE /files/{fileId}"
+      steps:
+        - action: "upload_file"
+          capture: "file_id_a"
+        - action: "delete"
+        - action: "upload_file"
+          capture: "file_id_b"
+        - action: "verify_ids_different"
+        - action: "download"
+          file_id: "file_id_a"
+          expected_status: 404
+
+  tiering:
+    - id: "TC-ADMIN-001"
+      priority: "P2"
+      name: "Run Tiering - No Files to Move"
+      endpoint: "POST /admin/tiering/run"
+      steps:
+        - action: "ensure_recent_access"
+          max_days: 29
+        - action: "run_tiering"
+          expected_status: 200
+        - action: "verify_response"
+          fields:
+            files_moved: 0
+    
+    - id: "TC-ADMIN-002"
+      priority: "P0"
+      name: "Run Tiering - Move Hot to Warm"
+      endpoint: "POST /admin/tiering/run"
+      steps:
+        - action: "upload_file"
+        - action: "update_last_accessed"
+          days_ago: 35
+        - action: "run_tiering"
+          expected_status: 200
+        - action: "verify_response"
+          fields:
+            files_moved: 1
+        - action: "verify_tier"
+          tier: "WARM"
+    
+    - id: "TC-ADMIN-003"
+      priority: "P0"
+      name: "Run Tiering - Move Warm to Cold"
+      endpoint: "POST /admin/tiering/run"
+      steps:
+        - action: "upload_file"
+        - action: "update_last_accessed"
+          days_ago: 35
+        - action: "run_tiering"
+        - action: "update_last_accessed"
+          days_ago: 95
+        - action: "run_tiering"
+          expected_status: 200
+        - action: "verify_response"
+          fields:
+            files_moved: 1
+        - action: "verify_tier"
+          tier: "COLD"
+    
+    - id: "TC-ADMIN-004"
+      priority: "P1"
+      name: "Run Tiering - Boundary Conditions"
+      endpoint: "POST /admin/tiering/run"
+      steps:
+        - action: "upload_file"
+          filename: "file_a.txt"
+        - action: "update_last_accessed"
+          days_ago: 29
+        - action: "upload_file"
+          filename: "file_b.txt"
+        - action: "update_last_accessed"
+          days_ago: 30
+        - action: "run_tiering"
+        - action: "verify_tier"
+          file_id: "file_a"
+          tier: "HOT"
+        - action: "verify_tier"
+          file_id: "file_b"
+          tier: "WARM"
+    
+    - id: "TC-ADMIN-005"
+      priority: "P1"
+      name: "Run Tiering - Multiple Files"
+      endpoint: "POST /admin/tiering/run"
+      steps:
+        - action: "bulk_upload"
+          count: 5
+        - action: "update_last_accessed"
+          count: 3
+          days_ago: 35
+        - action: "update_last_accessed"
+          count: 2
+          days_ago: 95
+          start_index: 3
+        - action: "run_tiering"
+        - action: "verify_tiering_results"
+    
+    - id: "TC-ADMIN-006"
+      priority: "P1"
+      name: "Run Tiering - PRIORITY Files Stay in HOT"
+      endpoint: "POST /admin/tiering/run"
+      steps:
+        - action: "upload_file"
+          filename: "PRIORITY_document.txt"
+        - action: "update_last_accessed"
+          days_ago: 100
+        - action: "run_tiering"
+        - action: "verify_tier"
+          tier: "HOT"
+    
+    - id: "TC-ADMIN-007"
+      priority: "P1"
+      name: "Run Tiering - Legal Documents Extended Retention"
+      endpoint: "POST /admin/tiering/run"
+      steps:
+        - action: "upload_file"
+          filename: "LEGAL_contract.pdf"
+        - action: "update_last_accessed"
+          days_ago: 35
+        - action: "run_tiering"
+        - action: "verify_tier"
+          tier: "WARM"
+        - action: "update_last_accessed"
+          days_ago: 100
+        - action: "run_tiering"
+        - action: "verify_tier"
+          tier: "WARM"
+        - action: "update_last_accessed"
+          days_ago: 185
+        - action: "run_tiering"
+        - action: "verify_tier"
+          tier: "COLD"
+    
+    - id: "TC-ADMIN-008"
+      priority: "P1"
+      name: "Run Tiering - Cold Tier Files Don't Move Up"
+      endpoint: "POST /admin/tiering/run"
+      steps:
+        - action: "upload_file"
+        - action: "move_to_cold"
+        - action: "download"
+        - action: "download"
+        - action: "run_tiering"
+        - action: "verify_tier"
+          tier: "COLD"
+    
+    - id: "TC-ADMIN-010"
+      priority: "P0"
+      name: "Run Tiering - Concurrent Tiering Runs"
+      endpoint: "POST /admin/tiering/run"
+      concurrent: true
+      steps:
+        - action: "prepare_tiering_dataset"
+        - action: "concurrent_tiering"
+          count: 5
+          expected_status: 200
+        - action: "verify_consistent_state"
+
+  admin_stats:
+    - id: "TC-ADMIN-011"
+      priority: "P2"
+      name: "Get Stats - Empty System"
+      endpoint: "GET /admin/stats"
+      steps:
+        - action: "ensure_empty_system"
+        - action: "get_stats"
+          expected_status: 200
+        - action: "verify_response"
+          fields:
+            total_files: 0
+            total_size: 0
+        - action: "verify_tier_stats"
+          all_zero: true
+    
+    - id: "TC-ADMIN-012"
+      priority: "P1"
+      name: "Get Stats - With Files"
+      endpoint: "GET /admin/stats"
+      steps:
+        - action: "bulk_upload"
+          count: 3
+          size: "sample"
+        - action: "get_stats"
+        - action: "verify_response"
+          fields:
+            total_files: 3
+        - action: "verify_tier_stats"
+          hot:
+            count: 3
+    
+    - id: "TC-ADMIN-013"
+      priority: "P1"
+      name: "Get Stats - After Tiering"
+      endpoint: "GET /admin/stats"
+      steps:
+        - action: "bulk_upload"
+          count: 5
+        - action: "setup_tiering_scenario"
+        - action: "run_tiering"
+        - action: "get_stats"
+        - action: "verify_tier_distribution"
+    
+    - id: "TC-ADMIN-014"
+      priority: "P1"
+      name: "Get Stats - After File Deletion"
+      endpoint: "GET /admin/stats"
+      steps:
+        - action: "bulk_upload"
+          count: 5
+        - action: "get_stats"
+          capture: "stats_before"
+        - action: "delete"
+          count: 2
+        - action: "get_stats"
+          capture: "stats_after"
+        - action: "verify_stats_decreased"
+          files: 2
+    
+    - id: "TC-ADMIN-015"
+      priority: "P1"
+      name: "Get Stats - Large Files"
+      endpoint: "GET /admin/stats"
+      steps:
+        - action: "upload_file"
+          size: "large"
+        - action: "get_stats"
+        - action: "verify_response"
+          fields:
+            total_size: 5368709120
+    
+    - id: "TC-ADMIN-016"
+      priority: "P1"
+      name: "Get Stats - Real-time Accuracy"
+      endpoint: "GET /admin/stats"
+      steps:
+        - action: "get_stats"
+          capture: "baseline"
+        - action: "upload_file"
+        - action: "get_stats"
+          capture: "after_upload"
+        - action: "verify_increment"
+        - action: "delete"
+        - action: "get_stats"
+          capture: "after_delete"
+        - action: "verify_decrement"
+

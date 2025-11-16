@@ -1,0 +1,180 @@
+# Performance Test Configuration for Cloud Storage Tiering System
+# This config file drives all performance tests
+
+test_suite:
+  name: "Cloud Storage Tiering System Performance Tests"
+  version: "1.0.0"
+
+# Performance thresholds and targets
+performance_thresholds:
+  upload:
+    small_files:
+      average_time_ms: 2000  # 2 seconds
+      max_time_ms: 5000
+    large_files:
+      throughput_mbps: 100  # MB/s
+      max_time_seconds: 300  # 5 minutes for 5GB
+  
+  download:
+    small_file_1mb:
+      max_time_ms: 1000
+    medium_file_100mb:
+      max_time_ms: 5000
+    large_file_1gb:
+      max_time_ms: 30000
+  
+  tiering:
+    max_time_seconds: 30  # 30 seconds for 1000 files
+  
+  stats:
+    max_time_ms: 1000  # 1 second for 10,000 files
+  
+  concurrent:
+    error_rate_percent: 1.0  # < 1% error rate
+    max_latency_p99_ms: 5000  # P99 latency < 5s
+
+# Test data configurations
+test_data:
+  file_sizes:
+    small: 2097152  # 2MB
+    medium: 104857600  # 100MB
+    large: 1073741824  # 1GB
+    very_large: 5368709120  # 5GB
+  
+  concurrent_workers: 50
+  bulk_file_count: 100
+  tiering_file_count: 1000
+  stats_file_count: 10000
+
+# Performance test cases
+test_cases:
+  upload_performance:
+    - id: "PERF-001"
+      priority: "P1"
+      name: "Upload Performance - Small Files"
+      endpoint: "POST /files"
+      description: "Test upload performance with 100 small files (2MB each)"
+      steps:
+        - action: "prepare_files"
+          count: 100
+          size: "small"
+        - action: "warmup_system"
+        - action: "sequential_upload"
+          count: 100
+          size: "small"
+          record_metrics: true
+        - action: "calculate_statistics"
+          metrics:
+            - average_time
+            - min_time
+            - max_time
+        - action: "verify_performance"
+          threshold: "upload.small_files.average_time_ms"
+          operator: "<"
+    
+    - id: "PERF-002"
+      priority: "P1"
+      name: "Upload Performance - Large Files"
+      endpoint: "POST /files"
+      description: "Test upload performance with 5GB file"
+      steps:
+        - action: "prepare_file"
+          size: "very_large"
+        - action: "upload_with_timing"
+          size: "very_large"
+          record_metrics: true
+        - action: "calculate_throughput"
+          unit: "MB/s"
+        - action: "verify_performance"
+          threshold: "upload.large_files.throughput_mbps"
+          operator: ">="
+
+  download_performance:
+    - id: "PERF-003"
+      priority: "P1"
+      name: "Download Performance"
+      endpoint: "GET /files/{fileId}"
+      description: "Test download performance with files of different sizes"
+      steps:
+        - action: "upload_file"
+          size: "small"
+          filename: "1mb_file.bin"
+        - action: "upload_file"
+          size: "medium"
+          filename: "100mb_file.bin"
+        - action: "upload_file"
+          size: "large"
+          filename: "1gb_file.bin"
+        - action: "download_with_timing"
+          file_size: "small"
+          record_metrics: true
+        - action: "download_with_timing"
+          file_size: "medium"
+          record_metrics: true
+        - action: "download_with_timing"
+          file_size: "large"
+          record_metrics: true
+        - action: "verify_download_performance"
+          thresholds:
+            - size: "small"
+              threshold: "download.small_file_1mb.max_time_ms"
+            - size: "medium"
+              threshold: "download.medium_file_100mb.max_time_ms"
+            - size: "large"
+              threshold: "download.large_file_1gb.max_time_ms"
+
+  tiering_performance:
+    - id: "PERF-004"
+      priority: "P1"
+      name: "Tiering Performance"
+      endpoint: "POST /admin/tiering/run"
+      description: "Test tiering performance with 1000 files"
+      steps:
+        - action: "seed_files_for_tiering"
+          count: 1000
+          spread_dates: true
+        - action: "warmup_system"
+        - action: "run_tiering_with_timing"
+          record_metrics: true
+        - action: "verify_performance"
+          threshold: "tiering.max_time_seconds"
+          operator: "<"
+
+  concurrent_performance:
+    - id: "PERF-005"
+      priority: "P0"
+      name: "Concurrent Operations"
+      endpoint: "Mixed"
+      description: "Test system performance under concurrent load"
+      steps:
+        - action: "prepare_concurrent_workload"
+          uploads: 50
+          downloads: 50
+          tiering: 10
+        - action: "warmup_system"
+        - action: "run_concurrent_workload"
+          record_metrics: true
+          track_errors: true
+        - action: "calculate_error_rate"
+        - action: "calculate_latency_metrics"
+          percentiles: [50, 90, 95, 99]
+        - action: "verify_concurrent_performance"
+          error_rate_threshold: "concurrent.error_rate_percent"
+          latency_threshold: "concurrent.max_latency_p99_ms"
+
+  stats_performance:
+    - id: "PERF-006"
+      priority: "P1"
+      name: "Stats Calculation Performance"
+      endpoint: "GET /admin/stats"
+      description: "Test stats calculation performance with 10,000 files"
+      steps:
+        - action: "seed_files"
+          count: 10000
+        - action: "warmup_system"
+        - action: "get_stats_with_timing"
+          record_metrics: true
+        - action: "verify_performance"
+          threshold: "stats.max_time_ms"
+          operator: "<"
+

